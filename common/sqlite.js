@@ -3,6 +3,7 @@ let fs = require('fs');
 let path = process.env.REPO_PATH;
 let dbFile = `${path}/repo.db`;
 let gamedbFile = `${path}/gamedb.db`;
+const BUSY_TIMEOUT = 5000;
 let tables = {
     devices:{
         "device":	        "TEXT",
@@ -51,31 +52,39 @@ let tables = {
 
 
 
-let get = async function(y, gameDBbool, params = []){
+//Each query opens its own connection and closes it once the query has finished
+let get = function(y, gameDBbool, params = []){
     let databaseFile = gameDBbool? gamedbFile: dbFile;
-    return new Promise(async function(resolve,reject){
-    let db = new sqlite3.Database(databaseFile, sqlite3.OPEN_READWRITE, async function(err) {
-        if(err)console.log('ERROR')
-        await db.all(y, params, async function(err,res){
+    return new Promise(function(resolve){
+        let db = new sqlite3.Database(databaseFile, sqlite3.OPEN_READWRITE, function(err) {
             if(err){
-                resolve(false)
+                console.log('ERROR', err.message);
+                return resolve(false);
             }
-            resolve(res);
+            //Wait for another connection's write instead of failing with SQLITE_BUSY
+            db.configure('busyTimeout', BUSY_TIMEOUT);
+            db.all(y, params, function(err, res){
+                db.close();
+                resolve(err ? false : res);
+            });
         });
-        });
-        db.close()
     })
 }
 
 let write = function(y, z){
-    return new Promise(function(resolve,reject){
-    let db = new sqlite3.Database(dbFile, sqlite3.OPEN_READWRITE, (err) => {
-        db.run(y,z,function(err,res){
-            if(err){  console.log(err); resolve(false) }
-            resolve(true);
+    return new Promise(function(resolve){
+        let db = new sqlite3.Database(dbFile, sqlite3.OPEN_READWRITE, (err) => {
+            if(err){
+                console.log(err);
+                return resolve(false);
+            }
+            db.configure('busyTimeout', BUSY_TIMEOUT);
+            db.run(y, z, function(err){
+                db.close();
+                if(err) console.log(err);
+                resolve(!err);
+            });
         });
-        });
-        db.close();
     })
 }
 
@@ -105,40 +114,29 @@ let objToNew = function(obj){
 }
     
 
-let setup = async function(){
+//Creates any missing tables. Resolves only once every CREATE has finished, so later
+//startup steps (migrate) don't race it for the database lock.
+let setup = function(){
     if(!fs.existsSync(dbFile)) fs.writeFileSync(dbFile,'');
-    db = await new sqlite3.Database(dbFile, sqlite3.OPEN_READWRITE, async function(err) {
-        if (err) {
-            console.log('ERROR NUM 1')
-            console.error(err.message);
-        }
-
-        let values = Object.values(tables);
-        for(let u = 0; u < values.length; u++){
-            let table = values[u];
-            let tableIndex = u
-            let keys = Object.keys(table);
-            let vals = Object.values(table);
-
-            let fields = "";
-            for(let i = 0; i < keys.length; i++){
-                fields += `${keys[i]} ${vals[i]}${i === keys.length-1 ? "":","}${"\n"}`
+    return new Promise(function(resolve){
+        let db = new sqlite3.Database(dbFile, sqlite3.OPEN_READWRITE, function(err) {
+            if (err) {
+                console.log('ERROR NUM 1')
+                console.error(err.message);
+                return resolve(false);
             }
-
-            let createQuery = `CREATE TABLE ${Object.keys(tables)[tableIndex]} (id INTEGER PRIMARY KEY AUTOINCREMENT, ${fields})`;
-
-            await db.run(createQuery,function(err2){
-                if(err2){
-                   
-                }
-                
+            db.serialize(function(){
+                Object.keys(tables).forEach(function(name){
+                    let fields = Object.keys(tables[name]).map(k => `${k} ${tables[name][k]}`).join(',\n');
+                    db.run(`CREATE TABLE IF NOT EXISTS ${name} (id INTEGER PRIMARY KEY AUTOINCREMENT, ${fields})`, function(err2){
+                        if(err2) console.log(`Could not create table ${name}: ${err2.message}`);
+                    });
+                });
             });
-            
-            }
-        //console.log('Connected to the database.');
+            //close() waits for the queued CREATEs
+            db.close(() => resolve(true));
+        });
     });
-    await db.close()
-  
 };
 
 //Adds any columns in the tables schema that are missing from an existing database
@@ -152,7 +150,8 @@ let migrate = async function(){
         let cols = Object.keys(tables[table]);
         for(let e = 0; e < cols.length; e++){
             if(existingCols.indexOf(cols[e]) === -1){
-                await write(`ALTER TABLE ${table} ADD COLUMN ${cols[e]} ${tables[table][cols[e]]}`, []);
+                let ok = await write(`ALTER TABLE ${table} ADD COLUMN ${cols[e]} ${tables[table][cols[e]]}`, []);
+                console.log(ok ? `Added column ${table}.${cols[e]}` : `FAILED to add column ${table}.${cols[e]} - see error above`);
             }
         }
     }
@@ -168,7 +167,8 @@ let run = function(sql, params = []){
 
 //The old config page saved empty fields as the text "null"/"undefined" - blank them out
 let cleanDevices = async function(){
-    let cols = Object.keys(tables.devices);
+    let existing = await get(`PRAGMA table_info(devices)`) || [];
+    let cols = existing.map(x => x.name).filter(x => x !== 'id');
     for(let i = 0; i < cols.length; i++){
         await write(`UPDATE devices SET ${cols[i]} = '' WHERE ${cols[i]} IN ('null', 'undefined')`, []);
     }
