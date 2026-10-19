@@ -87,7 +87,8 @@ module.exports={
         }
         else if(process.platform === "linux"){
             //Linux Version
-            let sourceDir = getDriveDir("/media", device.localExistCheck);
+            //Debian/Ubuntu mount under /media, udisks2 (Arch, Fedora) under /run/media
+            let sourceDir = getDriveDir("/media", device.localExistCheck) || getDriveDir("/run/media", device.localExistCheck);
             if(sourceDir){
                 device.basePath = sourceDir;
                 return true;

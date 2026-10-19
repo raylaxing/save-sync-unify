@@ -1,19 +1,174 @@
+<head>
+    <title>Device Config</title>
+    <link href="https://unpkg.com/nes.css@latest/css/nes.min.css" rel="stylesheet" />
+    <link href="https://fonts.googleapis.com/css?family=Press+Start+2P" rel="stylesheet">
+    <meta name="viewport" content="width=750, height=1000">
+</head>
 
-<body > CONFIG <div id="content" > </div > </body > <style > .successful {
-    color: green;
-}
-.failed {
-    color: red;
+<body>
+    <div class="nes-container with-title" id="mainContainer">
+        <div class="title"><h2>Devices</h2></div>
+        <div id="content">Loading...</div>
+    </div>
+
+    <dialog class="nes-dialog" id="picker">
+        <div id="pickerContent"></div>
+    </dialog>
+</body>
+<script src="config.js"></script>
+<style>
+body{
+    margin-left: 20px;
+    margin-right: 20px;
+    font-size: 12px;
 }
 .hidden {
-    display: none;
+    display: none!important;
 }
-.deviceFields {
-    width: 190px;
-    float: left;
+#mainContainer{
+    max-width:700px;
+    margin:auto;
+    margin-top:50px;
+    margin-bottom:50px;
 }
-.unavailableDevice{
-    color:#aaa;
-    border-color:#aaa;
+.toolbar{
+    display:flex;
+    justify-content:space-between;
+    margin-bottom:20px;
 }
-</style> <script src="config.js"></script>
+.deviceCard{
+    margin-bottom:20px!important;
+    background: linear-gradient(320deg, #a2c3e2, #cbb3ff00);
+}
+.deviceCard .title{
+    background:#fff;
+}
+.deviceMeta{
+    color:#555;
+    margin-bottom:10px;
+    word-break:break-all;
+}
+.badge{
+    display:inline-block;
+    padding:4px 8px;
+    margin:2px 4px 2px 0;
+    background:#afc4ff;
+    color:#3d4f7b;
+    border-radius:6px;
+    font-size:10px;
+}
+.badge.ftp{ background:#ffe08a; color:#6b5300; }
+.badge.local{ background:#b6e6b0; color:#245c1d; }
+.section{
+    margin-bottom:24px!important;
+}
+.field{
+    margin-bottom:16px;
+}
+.field label{
+    display:block;
+    margin-bottom:6px;
+}
+.field .nes-input, .field .nes-select{
+    font-size:12px;
+}
+.hint{
+    color:#777;
+    font-size:10px;
+    margin-top:6px;
+    line-height:1.5;
+}
+.err{
+    color:#e76e55;
+    font-size:10px;
+    margin-top:6px;
+}
+.has-error .nes-input{
+    border-image-source: url('data:image/svg+xml;utf8,<?xml version="1.0" encoding="UTF-8" ?><svg version="1.1" width="5" height="5" xmlns="http://www.w3.org/2000/svg"><path d="M2 1 h1 v1 h-1 z M1 2 h1 v1 h-1 z M3 2 h1 v1 h-1 z M2 3 h1 v1 h-1 z" fill="rgb(231,110,85)" /></svg>');
+    outline-color:#e76e55;
+}
+.row{
+    display:flex;
+    gap:10px;
+}
+.row > .grow{ flex:1; min-width:0; }
+.inputWithButton{
+    display:flex;
+    gap:8px;
+    align-items:center;
+}
+.inputWithButton .nes-input{ flex:1; min-width:0; }
+.inputWithButton .nes-btn{ font-size:10px; padding:4px 8px; white-space:nowrap; }
+.platformRow{
+    margin-bottom:20px!important;
+    position:relative;
+}
+.removePlatform{
+    position:absolute;
+    top:-14px;
+    right:10px;
+    font-size:10px!important;
+    padding:2px 6px!important;
+}
+.chip{
+    display:inline-block;
+    padding:4px 8px;
+    margin:4px 4px 0 0;
+    background:#eee;
+    border:2px solid #212529;
+    cursor:pointer;
+    font-size:10px;
+}
+.chip.selected{
+    background:#92cc41;
+    color:#fff;
+}
+.typeChoice label{ margin-right:20px; }
+.actions{
+    display:flex;
+    gap:10px;
+    justify-content:space-between;
+    flex-wrap:wrap;
+}
+.actions .nes-btn{ font-size:12px; }
+.testResult{
+    margin-top:12px;
+    line-height:1.8;
+}
+.ok{ color:#209cee; }
+.bad{ color:#e76e55; }
+#picker{
+    width:600px;
+    max-width:90vw;
+    font-size:12px;
+}
+.pickerPath{
+    background:#eee;
+    padding:8px;
+    margin-bottom:10px;
+    word-break:break-all;
+}
+.pickerList{
+    max-height:320px;
+    overflow-y:auto;
+    border:2px solid #212529;
+    margin-bottom:10px;
+}
+.pickerItem{
+    padding:8px 10px;
+    cursor:pointer;
+    border-bottom:1px solid #ddd;
+}
+.pickerItem:hover{ background:#afc4ff; }
+.pickerEmpty{ padding:10px; color:#777; }
+.pickerFooter{
+    display:flex;
+    justify-content:space-between;
+    gap:10px;
+    margin-top:10px;
+}
+.pickerFooter .nes-btn{ font-size:10px; }
+.saved{
+    color:#92cc41;
+}
+</style>

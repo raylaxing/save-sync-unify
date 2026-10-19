@@ -26,5 +26,6 @@ module.exports = async function(){
 
     //DB Check
     await db.setup();
+    await db.migrate();
     return true;
 }

@@ -14,7 +14,9 @@ let tables = {
         "localExistCheck":	"TEXT",
         "ftpAddress":	    "TEXT",
         "extensionSearch":	"TEXT",
-        "ftpPort":	        "TEXT"
+        "ftpPort":	        "TEXT",
+        "ftpAddressVpn":    "TEXT",
+        "romDir":           "TEXT"
     },
     discovery:{
             "device":	    "TEXT",
@@ -37,12 +39,12 @@ let tables = {
 
 
 
-let get = async function(y, gameDBbool){
+let get = async function(y, gameDBbool, params = []){
     let databaseFile = gameDBbool? gamedbFile: dbFile;
     return new Promise(async function(resolve,reject){
     let db = new sqlite3.Database(databaseFile, sqlite3.OPEN_READWRITE, async function(err) {
         if(err)console.log('ERROR')
-        await db.all(y,async function(err,res){
+        await db.all(y, params, async function(err,res){
             if(err){
                 resolve(false)
             }
@@ -126,6 +128,40 @@ let setup = async function(){
     await db.close()
   
 };
+
+//Adds any columns in the tables schema that are missing from an existing database
+let migrate = async function(){
+    let tableNames = Object.keys(tables);
+    for(let i = 0; i < tableNames.length; i++){
+        let table = tableNames[i];
+        let existing = await get(`PRAGMA table_info(${table})`);
+        if(!existing || existing.length === 0) continue; //Table not created yet - setup will create it in full
+        let existingCols = existing.map(x => x.name);
+        let cols = Object.keys(tables[table]);
+        for(let e = 0; e < cols.length; e++){
+            if(existingCols.indexOf(cols[e]) === -1){
+                await write(`ALTER TABLE ${table} ADD COLUMN ${cols[e]} ${tables[table][cols[e]]}`, []);
+            }
+        }
+    }
+}
+
+let getDevice = async function(id){
+    let res = await get(`SELECT * FROM devices WHERE id = ?`, false, [id]);
+    return res && res[0];
+}
+
+let deleteDevice = async function(id){
+    let device = await getDevice(id);
+    if(!device) return false;
+    await write(`DELETE FROM discovery WHERE device = ?`, [device.device]);
+    return await write(`DELETE FROM devices WHERE id = ?`, [id]);
+}
+
+let countDeviceMappings = async function(deviceId){
+    let res = await get(`SELECT count(*) as count FROM mapping WHERE device = ?`, false, [deviceId]);
+    return res && res[0] ? res[0].count : 0;
+}
 
 let getConfig = async function(){
     return await get(`SELECT * FROM devices order by name asc`);
@@ -230,5 +266,5 @@ let getSchema = function(){
     return tables;
 }
 
-module.exports={setup, getConfig, writeConfig, getPreferences, writePreference, getSchema, getRepo, getPlatformNames, newRepoRecord, updateRepoCopiedFrom, updateRepoCopiedTo, getFullMapping, deleteMappingEntry, getGameFromID
+module.exports={setup, migrate, getDevice, deleteDevice, countDeviceMappings, getConfig, writeConfig, getPreferences, writePreference, getSchema, getRepo, getPlatformNames, newRepoRecord, updateRepoCopiedFrom, updateRepoCopiedTo, getFullMapping, deleteMappingEntry, getGameFromID
 }

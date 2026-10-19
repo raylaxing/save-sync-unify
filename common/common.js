@@ -7,6 +7,7 @@ module.exports={
     local:require('./local.js'),
     functions:require('./functions.js'),
     git: require('./git.js'),
-    rom: require('./rom.js')
+    rom: require('./rom.js'),
+    deviceConfig: require('./deviceConfig.js')
 
 }

@@ -90,8 +90,10 @@ let copyToTemp = async function(device, k){
 
     //List the directory and only download files that match the save extensions
     let remoteFiles = await listFiles(client, searchPath);
-    for(let v = 0; v < searchExts.length; v++){
-        let found = remoteFiles.filter(f => f.endsWith(`.${searchExts[v]}`));
+    //No extensions set means copy every file (same as local devices)
+    let extGroups = searchExts.length === 0 ? [null] : searchExts;
+    for(let v = 0; v < extGroups.length; v++){
+        let found = extGroups[v] === null ? remoteFiles : remoteFiles.filter(f => f.endsWith(`.${extGroups[v]}`));
 
         for(let e = 0; e < found.length; e++){
             let rootPath = found[e];

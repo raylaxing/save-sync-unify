@@ -172,25 +172,55 @@ let run = function(){
 
 
     /**CONFIG PAGE**/
+    let configError = function(response, e){
+        response.status(400).send({error: e.message || `${e}`});
+    };
+
     app.get('/configData/getDevices',  async function(request,response){
-        let config =  await c.db.getConfig();
-        response.send(config);
-        response.end()
-    });
-    app.get('/configData/getSchema',  async function(request,response){
-        let schema =  await c.db.getSchema();
-        response.send(schema);
-        response.end()
+        let rows = await c.db.getConfig() || [];
+        response.send({
+            devices: rows.map(c.deviceConfig.toEditable),
+            platforms: await c.deviceConfig.knownPlatforms(rows)
+        });
     });
     app.post('/configData/writeDevice', async function(request, response){
-        console.log(request.body)
+        let input = request.body || {};
+        let rows = await c.db.getConfig() || [];
+        let existing = input.id ? rows.find(r => r.id === +input.id) : null;
+        if(input.id && !existing) return configError(response, new Error('Device not found'));
 
-        let writeResponse;
-        if(request.body&&request.body.device) 
-            writeResponse = await c.db.writeConfig(request.body);
-        response.send(JSON.stringify({writeResponse}));
-        response.end()
-    })
+        let known = (await c.deviceConfig.knownPlatforms(rows)).map(p => p.code);
+        let {errors, row} = await c.deviceConfig.validate(input, existing, rows, known);
+        if(Object.keys(errors).length) return response.send({ok: false, errors});
+
+        if(existing) row.id = existing.id;
+        let ok = await c.db.writeConfig(row);
+        let saved = (await c.db.getConfig() || []).find(r => r.device === row.device);
+        response.send({ok, device: saved && c.deviceConfig.toEditable(saved)});
+    });
+    app.post('/configData/deleteDevice', async function(request, response){
+        let row = await c.db.getDevice(request.body.id);
+        if(!row) return configError(response, new Error('Device not found'));
+        let ok = await c.db.deleteDevice(row.id);
+        response.send({ok});
+    });
+    app.post('/configData/deviceUsage', async function(request, response){
+        let row = await c.db.getDevice(request.body.id);
+        response.send({mappings: row ? await c.db.countDeviceMappings(row.device) : 0});
+    });
+    app.post('/configData/browse', async function(request, response){
+        try{
+            response.send(await c.deviceConfig.browse(request.body.device || {}, request.body.path));
+        }catch(e){
+            configError(response, e);
+        }
+    });
+    app.get('/configData/drives', function(request, response){
+        response.send(c.deviceConfig.listDrives());
+    });
+    app.post('/configData/test', async function(request, response){
+        response.send(await c.deviceConfig.test(request.body.device || {}));
+    });
 
 
     app.listen(port, () => {
