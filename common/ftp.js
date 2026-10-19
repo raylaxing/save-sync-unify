@@ -1,7 +1,13 @@
 let isReachable = require('is-reachable');
 let ftp = require('basic-ftp');
-let globby = require('glob');
 let fs = require('fs');
+let path = require('path');
+
+//Reachability timeout - LAN devices answer in milliseconds, so don't wait long on offline ones
+const REACHABLE_TIMEOUT = 5000;
+
+//Open FTP connections, keyed by device id, so platforms/files on the same device share one login
+let pool = {};
 
 let  newConnection = function () {
     return new Promise(function (resolve, reject) {
@@ -11,12 +17,42 @@ let  newConnection = function () {
     });
 };
 
+//Returns an open client for the device, reusing the existing connection if still alive
+let getConnection = async function(device){
+    let entry = pool[device.device];
+    if(entry && !entry.client.closed) return entry;
+
+    let client = await newConnection();
+    await client.access({
+        host: device.ftpAddress,
+        user: device.ftpUser,
+        password: device.ftpPW,
+        port: device.ftpPort
+    });
+
+    //Remember login directory so relative config paths resolve the same on a reused connection
+    entry = {client, home: await client.pwd()};
+    pool[device.device] = entry;
+    return entry;
+};
+
+//Close the device's pooled connection (call when finished with a batch of transfers)
+let releaseConnection = function(device){
+    let entry = pool[device.device];
+    if(entry) entry.client.close();
+    delete pool[device.device];
+};
+
+let resolvePath = function(home, p){
+    return p.startsWith('/') ? p : path.posix.join(home, p);
+};
+
 //Checks URL and returns if it's alive or not
 let onlineCheck = async function(device){
-    let available =  await isReachable(`${device.ftpAddress}:${device.ftpPort}`, {timeout:60000});
+    let available =  await isReachable(`${device.ftpAddress}:${device.ftpPort}`, {timeout:REACHABLE_TIMEOUT});
     if(!available && device.ftpAddressVpn && device.ftpAddressVpn !== ''){
         //Check for VPN address is available and replace is available
-        available = await isReachable(`${device.ftpAddressVpn}:${device.ftpPort}`, {timeout:60000});
+        available = await isReachable(`${device.ftpAddressVpn}:${device.ftpPort}`, {timeout:REACHABLE_TIMEOUT});
         if(available) {
             device.ftpAddress = device.ftpAddressVpn;
             device.vpnActive = true
@@ -25,81 +61,66 @@ let onlineCheck = async function(device){
     return available;
 };
 
+//Recursively list remote files under dir, returning paths relative to it (skips dotfiles like glob did)
+let listFiles = async function(client, dir, rel = ''){
+    let files = [];
+    //cd then list, as minimal servers (e.g. Wii ftpii) may not accept a path on LIST
+    await client.cd(rel ? `${dir}/${rel}` : dir);
+    let entries = await client.list();
+    for(let i = 0; i < entries.length; i++){
+        let entry = entries[i];
+        if(entry.name.startsWith('.')) continue;
+        let entryPath = rel ? `${rel}/${entry.name}` : entry.name;
+        if(entry.isDirectory){
+            files = files.concat(await listFiles(client, dir, entryPath));
+        }else if(entry.isFile){
+            files.push(entryPath);
+        }
+    }
+    return files;
+};
 
 let copyToTemp = async function(device, k){
     //Define Paths for transfer
-    let searchPath = `${device.paths[k]}`;
     let searchExts = device.extensionSearch[k];
-    let downloadDir = `./TEMP/${device.device}/${k}/DownloadDir`;
     device.fileList[k] = [];
 
-    //Create FTP Client
-    let client = await newConnection();
-    await client.access({
-        host: device.ftpAddress,
-        user: device.ftpUser,
-        password: device.ftpPW,
-        port: device.ftpPort
-    });
+    let {client, home} = await getConnection(device);
+    let searchPath = resolvePath(home, `${device.paths[k]}`);
 
-    //Navigate to FTP directory
-    await client.cd(searchPath);
-
-    //Download contents of directory to temp download directory
-    await client.downloadToDir(downloadDir);
-
-    //Search the download folder with files that match file extension
-    let found = [];
+    //List the directory and only download files that match the save extensions
+    let remoteFiles = await listFiles(client, searchPath);
     for(let v = 0; v < searchExts.length; v++){
-        let list = await globby(`${downloadDir}/**/*.${searchExts[v]}`);
-        found = found.concat(list);
+        let found = remoteFiles.filter(f => f.endsWith(`.${searchExts[v]}`));
+
+        for(let e = 0; e < found.length; e++){
+            let rootPath = found[e];
+            let tempPath = `./TEMP/${device.device}/${k}/${rootPath}`;
+            fs.mkdirSync(path.dirname(tempPath), {recursive:true});
+            await client.downloadTo(tempPath, `${searchPath}/${rootPath}`);
+            device.fileList[k].push({
+                temp: tempPath,
+                rootPath
+            });
+        }
     }
 
-    //Copy matching files out of download folder and into root temp directory
-    for(let v = 0; v < found.length; v++){
-        let path = './'+found[v].replace(/\\/g, '/');
-        let rootPath = path.replace(downloadDir+'/', '');
-        
-        let tempPath = `./TEMP/${device.device}/${k}/${rootPath}`;
-        fs.cpSync(path, tempPath);
-        device.fileList[k].push({
-            temp: tempPath,
-            rootPath
-        });
-    }
-
-    //Delete download directory
-    fs.rmSync(downloadDir, {recursive:true});
-    
-    await client.close();
     return device
 }
 
 let copyFromTemp = async function(device, destination){
- 
+
     //Local File
     let copyFromPath = destination.newSave;
 
+    let {client, home} = await getConnection(device);
+
     //FTP File to be overwritten
-    let deviceDir = device.paths[destination.platform]
+    let deviceDir = resolvePath(home, device.paths[destination.platform]);
     let deviceFile = destination.path
 
-    //FTP Client Create
-    let client = await newConnection();
-    await client.access({
-        host: device.ftpAddress,
-        user: device.ftpUser,
-        password: device.ftpPW,
-        port: device.ftpPort
-    });
-
-    //Navigate to ftp directory
-    await client.cd(deviceDir);
-
     //Copy file from temp directory to ftp directory
-    let result = await client.uploadFrom(copyFromPath, deviceFile);
-    
-    client.close()
+    let result = await client.uploadFrom(copyFromPath, `${deviceDir}/${deviceFile}`);
 
     //If result.code === 226 (successful) return true
     return result.code === 226 ? true : false
@@ -108,19 +129,10 @@ let copyFromTemp = async function(device, destination){
 
 let copyRom = async function(copyFromPath, deviceFile, device){
 
-    //FTP Client Create
-    let client = await newConnection();
-    await client.access({
-        host: device.ftpAddress,
-        user: device.ftpUser,
-        password: device.ftpPW,
-        port: device.ftpPort
-    });
+    let {client} = await getConnection(device);
 
     //Copy file from temp directory to ftp directory
     let result = await client.uploadFrom(copyFromPath, deviceFile);
-    
-    client.close()
 
     //If result.code === 226 (successful) return true
     return result.code === 226 ? true : false
@@ -131,6 +143,6 @@ module.exports={
     copyFromTemp,
     onlineCheck,
     newConnection,
+    releaseConnection,
     copyRom,
 }
-

@@ -5,9 +5,9 @@ let {zip} = require('zip-a-folder');
 
 //This get's the online devices and prepares them for continuing...
 let getOnlineDevices = async function(config, mode){
-    for(let i = 0; i < config.length; i++){
+    //Check all devices at the same time so offline devices don't hold up the rest
+    await Promise.all(config.map(async function(device){
         //Checks if device is alive or not, and sets online flag
-        let device = config[i];
         device.online = false;
 
         //Add base functions, and replace with plugin function if found
@@ -21,7 +21,7 @@ let getOnlineDevices = async function(config, mode){
         device.extensionSearch = JSON.parse(device.extensionSearch);
         device.platformList = Object.keys(device.paths);
         if(device.romDir && device.romDir !=='') device.romDir = JSON.parse(device.romDir) 
-    }
+    }));
     return config
 }
 
@@ -35,8 +35,8 @@ let prepareFiles = async function(devices){
     c.functions.dirCreate(`${process.env.REPO_PATH}/DEVICE/${c.functions.yearMonth()}`)
 
 
-    for(let i = 0; i < devices.length; i++){
-        let device = devices[i];
+    //Gather from each device in parallel - transfers within a device stay sequential on one connection
+    await Promise.all(devices.map(async function(device){
         console.log(`Gathering files for ${device.name[device.type==='ftp'?'cyan':'green']}`)
 
         //Set up folders
@@ -49,20 +49,24 @@ let prepareFiles = async function(devices){
         }
 
         device.fileList = {};
-        for(let i = 0; i < device.platformList.length; i++){
-            let k = device.platformList[i];
-            if(device.pluginFunctions && device.pluginFunctions.copyToTemp && device.pluginFunctions.copyToTemp[k]){
-                device = await device.pluginFunctions.copyToTemp[k](device, k);
-            }else if(typeof(device.functions.copyToTemp === 'function')){
-                device = await device.functions.copyToTemp(device, k);
+        try{
+            for(let i = 0; i < device.platformList.length; i++){
+                let k = device.platformList[i];
+                if(device.pluginFunctions && device.pluginFunctions.copyToTemp && device.pluginFunctions.copyToTemp[k]){
+                    device = await device.pluginFunctions.copyToTemp[k](device, k);
+                }else if(typeof device.functions.copyToTemp === 'function'){
+                    device = await device.functions.copyToTemp(device, k);
+                }
+
+                let newZipFile = `${c.functions.numberDate()}_${k}_${device.device}_${identity}.zip`
+                await zip(`./TEMP/${device.device}/${k}`, `./TEMP/ZIP/${newZipFile}`)
+
+                c.functions.copy(`./TEMP/ZIP/${newZipFile}`, `${process.env.REPO_PATH}/DEVICE/${c.functions.yearMonth()}/${newZipFile}`)
             }
-
-            let newZipFile = `${c.functions.numberDate()}_${k}_${device.device}_${identity}.zip`
-            await zip(`./TEMP/${device.device}/${k}`, `./TEMP/ZIP/${newZipFile}`)
-
-            c.functions.copy(`./TEMP/ZIP/${newZipFile}`, `${process.env.REPO_PATH}/DEVICE/${c.functions.yearMonth()}/${newZipFile}`)
+        }finally{
+            if(device.functions.releaseConnection) device.functions.releaseConnection(device);
         }
-    }
+    }));
 
     //Do the GIT for Backups
     if(await c.git.exists( `${process.env.REPO_PATH}/DEVICE/`)){
@@ -116,6 +120,11 @@ let syncTheSave = async function(source, pushList, online){
                 
         //Push to success array
         success.push(res?'success':'failed')
+    }
+
+    //Close any connections opened while pushing
+    for(let e = 0; e < online.length; e++){
+        if(online[e].functions && online[e].functions.releaseConnection) online[e].functions.releaseConnection(online[e]);
     }
 
     //Do the GIT for Trace and Main REPO

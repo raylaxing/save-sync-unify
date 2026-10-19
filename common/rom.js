@@ -125,6 +125,7 @@ let copyRoms = async function(romList, device){
         let thisRom = romList[i];
         await device.functions.copyRom(thisRom.repoFile, thisRom.deviceFile, device)
     }
+    if(device.functions.releaseConnection) device.functions.releaseConnection(device);
     return true;
 }
 
