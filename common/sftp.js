@@ -135,21 +135,22 @@ let copyToTemp = async function(device, k){
     //List the directory and only download files that match the save extensions
     let remoteFiles = await listFiles(client, searchPath);
     //No extensions set means copy every file (same as local devices)
-    let extGroups = searchExts.length === 0 ? [null] : searchExts;
-    for(let v = 0; v < extGroups.length; v++){
-        let found = extGroups[v] === null ? remoteFiles : remoteFiles.filter(f => f.endsWith(`.${extGroups[v]}`));
+    let found = searchExts.length === 0 ? remoteFiles
+        : searchExts.flatMap(ext => remoteFiles.filter(f => f.endsWith(`.${ext}`)));
 
-        for(let e = 0; e < found.length; e++){
-            let rootPath = found[e];
-            let tempPath = `./TEMP/${device.device}/${k}/${rootPath}`;
-            fs.mkdirSync(path.dirname(tempPath), {recursive:true});
-            await client.get(`${searchPath}/${rootPath}`, tempPath);
-            device.fileList[k].push({
-                temp: tempPath,
-                rootPath
-            });
-        }
+    let report = device.reportProgress || function(){};
+    for(let e = 0; e < found.length; e++){
+        let rootPath = found[e];
+        report({done: e, total: found.length, file: rootPath});
+        let tempPath = `./TEMP/${device.device}/${k}/${rootPath}`;
+        fs.mkdirSync(path.dirname(tempPath), {recursive:true});
+        await client.get(`${searchPath}/${rootPath}`, tempPath);
+        device.fileList[k].push({
+            temp: tempPath,
+            rootPath
+        });
     }
+    report({done: found.length, total: found.length, file: ''});
 
     return device
 }

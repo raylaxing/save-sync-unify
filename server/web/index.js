@@ -4,7 +4,7 @@ let onlineObj;
 let elems = {};
 let area = "main";
 let step = 0;
-let latestRepo, pushToList, available;
+let latestRepo, pushToList, available, gameEntries;
 
 /***********************
  * PROCCESS FUNCTIONS  *
@@ -40,16 +40,134 @@ let writePrefChange = async function(e){
     });
 }
 
+let esc = function(str){
+    return `${str ?? ''}`.replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+};
+
+/** PROGRESS **/
+let progressState = null;
+let progressStarted = 0;
+
+let progressStatus = function(d){
+    switch(d.status){
+        case 'checking': return ['Checking...', ''];
+        case 'online': return ['Waiting', ''];
+        case 'offline': return ['Offline', 'is-disabled'];
+        case 'skipped': return ['Skipped', 'is-disabled'];
+        case 'gathering': return ['Gathering', 'is-primary'];
+        case 'done': return [`${d.fileCount} save${d.fileCount === 1 ? '' : 's'}`, 'is-success'];
+        case 'failed': return ['Failed', 'is-error'];
+        default: return ['', ''];
+    }
+};
+
+//0-1 progress for a device that is being gathered
+let deviceFraction = function(d){
+    if(d.status === 'done' || d.status === 'failed') return 1;
+    if(d.status !== 'gathering' || !d.platformCount) return 0;
+    let within = d.total ? d.done / d.total : 0;
+    return Math.min(1, (d.platformIndex + within) / d.platformCount);
+};
+
+let renderProgress = function(){
+    let area = document.getElementById('loading');
+    let s = progressState;
+    if(!area || !s) return;
+
+    let devices = (s.order || []).map(id => s.devices[id]);
+    let gathered = devices.filter(d => ['gathering', 'done', 'failed'].indexOf(d.status) !== -1);
+    let overall = gathered.length ? gathered.reduce((sum, d) => sum + deviceFraction(d), 0) / gathered.length : 0;
+    let elapsed = Math.round((Date.now() - progressStarted) / 1000);
+
+    let rows = devices.map(function(d){
+        let [label, cls] = progressStatus(d);
+        let detail = '';
+        if(d.status === 'gathering'){
+            let platform = d.platform ? `${esc(d.platform)} (${d.platformIndex + 1}/${d.platformCount})` : '';
+            let files = d.total ? `${d.done}/${d.total}` : 'scanning...';
+            detail = `
+                <progress class="nes-progress is-primary progressSmall" value="${Math.round(deviceFraction(d) * 100)}" max="100"></progress>
+                <div class="progressDetail">${platform} &middot; ${files}${d.file ? ` &middot; ${esc(d.file)}` : ''}</div>`;
+        }
+        if(d.status === 'failed') detail = `<div class="progressDetail nes-text is-error">${esc(d.error)}</div>`;
+        return `
+        <div class="progressDevice">
+            <div class="progressHead">
+                <span>${esc(d.name)}${d.vpn ? ' <span style="font-size:10px;color:gray;">VPN</span>' : ''}</span>
+                <span class="nes-text ${cls}">${label}</span>
+            </div>
+            ${detail}
+        </div>`;
+    }).join('');
+
+    area.innerHTML = `
+        <p class="title">Progress</p>
+        <div class="progressHead">
+            <span>${esc(s.phase)}</span>
+            <span style="color:gray">${elapsed}s</span>
+        </div>
+        <progress class="nes-progress ${s.running === false && s.phase !== 'Done' ? 'is-error' : 'is-success'}" value="${s.phase === 'Done' ? 100 : Math.round(overall * 100)}" max="100"></progress>
+        ${rows}
+        ${(s.warnings || []).map(w => `<p class="nes-text is-warning" style="margin-top:16px;font-size:10px">${esc(w)}</p>`).join('')}
+        <div id="progressActions"></div>`;
+};
+
 let copyToTemp = async function(){
     document.getElementById('startButtonDiv').classList.add('hidden');
 
     let loading = document.getElementById('loading');
     loading.classList.remove('hidden');
+    progressStarted = Date.now();
+    progressState = {phase: 'Starting...', order: [], devices: {}};
+    renderProgress();
 
-    onlineObj = await (await fetch(apiPrefix+'/copyToTemp')).json();
+    //Live updates while the request runs
+    let events = new EventSource(apiPrefix+'/progress');
+    events.onmessage = function(e){
+        let s = JSON.parse(e.data);
+        //Ignore the previous run's final state, sent when first connecting
+        if(s.started && s.started < progressStarted - 5000) return;
+        progressState = s;
+        renderProgress();
+    };
+    let ticker = setInterval(renderProgress, 1000);
+
+    let res, body;
+    try{
+        res = await fetch(apiPrefix+'/copyToTemp');
+        body = await res.json();
+    }catch(e){
+        body = {error: e.message};
+    }
+    events.close();
+    clearInterval(ticker);
+
+    if(!res || !res.ok){
+        progressState = Object.assign({}, progressState, {running: false, phase: `Failed: ${body.error || 'server error'}`});
+        renderProgress();
+        document.getElementById('progressActions').innerHTML = `<button class="nes-btn" onClick="location.reload()">Back</button>`;
+        return;
+    }
+
+    onlineObj = body;
     console.log(onlineObj)
+    progressState = Object.assign({}, progressState, {running: false, phase: 'Done'});
+    renderProgress();
 
-    loading.classList.add('hidden');
+    //Leave failures on screen until acknowledged, otherwise carry straight on
+    let failed = onlineObj.filter(d => d.gatherError);
+    let warnings = progressState.warnings || [];
+    if(failed.length || warnings.length){
+        document.getElementById('progressActions').innerHTML = `
+            ${failed.length ? `<p class="nes-text is-error" style="margin-top:16px;font-size:12px">${failed.length} device(s) couldn't be read - their saves won't be listed.</p>` : ''}
+            <button class="nes-btn" onClick="finishProgress()">Continue</button>`;
+        return;
+    }
+    setTimeout(finishProgress, 800);
+}
+
+let finishProgress = function(){
+    document.getElementById('loading').classList.add('hidden');
     renderMenu()
 }
 
@@ -299,6 +417,84 @@ let addGame_submit = async function(){
 }
 
 /***********************
+ * SAVE VERSIONS        *
+ ***********************/
+
+let createVersionsInfo = function(versions){
+    if(!Array.isArray(versions)){
+        return `<p class="nes-text is-error" style="font-size:12px">${esc(versions && versions.error)}</p>`;
+    }
+    let rows = versions.map(v => `
+        <label class="versionRow">
+            <input type="radio" class="nes-radio" name="syncVersion" ${v.active ? 'checked' : ''} onChange="syncGame_setVersion(${v.id})" />
+            <span>${v.label ? `[${esc(v.label)}]` : 'Original'}</span>
+        </label>
+        <div class="progressDetail versionMeta">${v.present ? `Saved ${nd(v.modifiedTime, true)}` : 'Empty - sync from a device to fill it'}</div>`).join('');
+
+    return `
+    <div class="nes-container with-title choice-section">
+        <p class="title">Save version</p>
+        ${rows}
+        <div id="newVersionForm" class="hidden" style="margin-top:20px">
+            <div class="nes-field">
+                <label for="newVersionLabel">Comment</label>
+                <input id="newVersionLabel" class="nes-input" placeholder="2nd play through" autocomplete="off" />
+            </div>
+            <label for="newVersionStart" style="margin-top:12px">Start from</label>
+            <div class="nes-select">
+                <select id="newVersionStart">
+                    <option value="empty">Empty - for a new playthrough</option>
+                    <option value="copy">Copy of the active version</option>
+                </select>
+            </div>
+            <label style="margin-top:12px"><input type="checkbox" class="nes-checkbox" id="newVersionActivate" checked /><span>Make it the active version</span></label>
+            <p id="newVersionError" class="nes-text is-error" style="font-size:10px"></p>
+            <button class="nes-btn is-primary" onClick="syncGame_createVersion()">Create</button>
+            <button class="nes-btn" onClick="syncGame_toggleNewVersion(false)">Cancel</button>
+        </div>
+        <div id="newVersionButton" style="margin-top:16px">
+            <button class="nes-btn" onClick="syncGame_toggleNewVersion(true)">+ New version</button>
+        </div>
+        <p class="progressDetail" style="margin-top:12px;word-break:normal">Only the active version is synced. The others stay safe in the repo.</p>
+    </div>`;
+}
+
+let syncGame_toggleNewVersion = function(show){
+    document.getElementById('newVersionForm').classList.toggle('hidden', !show);
+    document.getElementById('newVersionButton').classList.toggle('hidden', show);
+    if(show) document.getElementById('newVersionLabel').focus();
+}
+
+let syncGame_createVersion = async function(){
+    let res = await post(apiPrefix+'/createVersion', {
+        platform: elems.syncGame.ui.syncGame_platform.value,
+        game: elems.syncGame.ui.syncGame_existingList.value,
+        label: document.getElementById('newVersionLabel').value,
+        startFrom: document.getElementById('newVersionStart').value,
+        activate: document.getElementById('newVersionActivate').checked
+    }, true);
+    if(res.error){
+        document.getElementById('newVersionError').textContent = res.error;
+        return;
+    }
+    await syncGame_existingList();
+}
+
+let syncGame_setVersion = async function(id){
+    let ok = confirm(`Switch the active version?\n\nYour devices still hold the current version's save. If it has progress you want to keep, sync it into the repo first.\n\nAfterwards, sync from the Repository to put the new version on your devices.`);
+    if(ok){
+        let res = await post(apiPrefix+'/setActiveVersion', {
+            platform: elems.syncGame.ui.syncGame_platform.value,
+            game: elems.syncGame.ui.syncGame_existingList.value,
+            id
+        }, true);
+        if(res.error) alert(res.error);
+    }
+    //Re-render either way so the radio buttons match the saved state
+    await syncGame_existingList();
+}
+
+/***********************
  * SYNC GAME FUNCTIONS  *
  ***********************/
 
@@ -326,8 +522,18 @@ let syncGame_existingList  = async function(){
     let game = elems.syncGame.ui.syncGame_existingList.value;
     let platform = elems.syncGame.ui.syncGame_platform.value;
     if(game !== ""){
-        let repoData = await post(apiPrefix+'/getRepoStatInfo',{platform,game}, true);
+        let [repoData, versions] = await Promise.all([
+            post(apiPrefix+'/getRepoStatInfo',{platform,game}, true),
+            post(apiPrefix+'/getVersions',{platform,game}, true)
+        ]);
+        //Name the repo copy after the active version so it's clear which save is being synced
+        let active = Array.isArray(versions) ? versions.find(v => v.active) : null;
+        for(i in repoData){
+            if(repoData[i].device === 'repo' && active && active.label) repoData[i].deviceName = `Repository [${active.label}]`;
+        }
+        elems.syncGame.info.versions.innerHTML = createVersionsInfo(versions);
         elems.syncGame.info.files.innerHTML = createExistingGameInfo(repoData);
+        gameEntries = repoData;
        
         available = [];
         let availableDevices = [];
@@ -348,11 +554,13 @@ let syncGame_device = async function(){
     let device = elems.syncGame.ui.syncGame_device.value;
     if(device!==""){
         pushToList = [];
-        for(let i = 0; i < available.length; i++){
-            if(available[i].device === device){
-                latestRepo = available[i]
-            }else{
-                pushToList.push(available[i]);
+        for(let i = 0; i < gameEntries.length; i++){
+            let entry = gameEntries[i];
+            if(entry.device === device && entry.present){
+                latestRepo = entry
+            }else if(entry.present || entry.device === 'repo'){
+                //The repo copy can be empty (a new version) - it's still somewhere to sync to
+                pushToList.push(entry);
             }
         }
         elems.syncGame.info.confirm.innerHTML = createConfirmationGameInfo(device);
@@ -525,6 +733,7 @@ let renderMenu = async function(){
         </div>
 
         <div id="syncGame_device_area"  class="syncGameStep choice-section" data-step="2">
+            <div id="syncGame_versions"></div>
             <div id="syncGame_FileInfo" ></div>
             ${create.dropdown('syncGame_device','Select latest Device' , 'syncGame_device()')}
         </div>
@@ -587,6 +796,7 @@ let renderMenu = async function(){
     elems.syncGame = {steps:{}, ui:{}, area:{}, info:{}};
     elems.syncGame.area = document.getElementById('syncGame');
     elems.syncGame.info.files = document.getElementById('syncGame_FileInfo');
+    elems.syncGame.info.versions = document.getElementById('syncGame_versions');
     elems.syncGame.info.confirm = document.getElementById('syncGame_confirmInfo')
     let syncStepDivs = document.getElementsByClassName('syncGameStep');
     for(step in syncStepDivs){
@@ -663,7 +873,7 @@ let renderFirstStep = async function(){
     </div>
     </div>`
 
-    htmlArea.innerHTML += `<div id='loading' class='hidden nes-container is-centered'> <h3>Please standby</h3> </div>`;
+    htmlArea.innerHTML += `<div id='loading' class='hidden nes-container with-title'></div>`;
 
 
     /** Check Marks Set up  */

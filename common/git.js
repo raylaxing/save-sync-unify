@@ -10,25 +10,17 @@ let exists = async function(path){
     return false
 }
 
+//Stages new and modified files under path (a folder inside the repo) and commits them.
+//git runs from inside path, so stage "." rather than the repo-root-relative paths git status reports.
 let add = async function(path){
     let git = await simpleGit(path);
-    let state = await git.status();
+    await git.add(['--ignore-removal', '.']);
 
-    let notAdded =state.not_added;
-    let modified =state.modified;
+    let staged = await git.diff(['--cached', '--name-only']);
+    if(staged.trim() === '') return false;
 
-    if(notAdded.length > 0 || modified.length > 0 ){  
-        for(let i = 0; i < modified.length; i++){
-            await git.add(modified[i]);
-        }
-        for(let i = 0; i < notAdded.length; i++){
-            await git.add(notAdded[i]);
-        }
-        await git.commit(c.functions.numberDate());
-        return true;
-    }else{
-        return false;
-    }
+    await git.commit(c.functions.numberDate());
+    return true;
 }
 
 let push = async function(path){

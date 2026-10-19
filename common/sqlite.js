@@ -35,6 +35,17 @@ let tables = {
     platforms:{
         "name":             "TEXT",
         "short":            "TEXT"
+    },
+    //Save versions of a game kept in the repo - the active one is what the repo mapping row points at
+    versions:{
+        "platform":         "TEXT",
+        "game":             "TEXT",
+        "label":            "TEXT",
+        "path":             "TEXT",
+        "active":           "INTEGER",
+        "created":          "TEXT",
+        "lastCopiedFrom":   "TEXT",
+        "lastCopiedTo":     "TEXT"
     }
 }
 
@@ -146,6 +157,14 @@ let migrate = async function(){
         }
     }
 }
+
+//Parameterised helpers for modules that need their own queries
+let query = function(sql, params = []){
+    return get(sql, false, params);
+};
+let run = function(sql, params = []){
+    return write(sql, params);
+};
 
 let getDevice = async function(id){
     let res = await get(`SELECT * FROM devices WHERE id = ?`, false, [id]);
@@ -267,5 +286,5 @@ let getSchema = function(){
     return tables;
 }
 
-module.exports={setup, migrate, getDevice, deleteDevice, countDeviceMappings, getConfig, writeConfig, getPreferences, writePreference, getSchema, getRepo, getPlatformNames, newRepoRecord, updateRepoCopiedFrom, updateRepoCopiedTo, getFullMapping, deleteMappingEntry, getGameFromID
+module.exports={setup, migrate, query, run, getDevice, deleteDevice, countDeviceMappings, getConfig, writeConfig, getPreferences, writePreference, getSchema, getRepo, getPlatformNames, newRepoRecord, updateRepoCopiedFrom, updateRepoCopiedTo, getFullMapping, deleteMappingEntry, getGameFromID
 }

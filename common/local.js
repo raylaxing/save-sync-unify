@@ -41,8 +41,10 @@ let copyToTemp = async function(device, k){
     }
 
     //Copy files to temp
+    let report = device.reportProgress || function(){};
     for(let v = 0; v < found.length; v++){
         let path = found[v].replace(/\\/g, '/');
+        report({done: v, total: found.length, file: path.replace(searchPath + '/', '')});
         let rootPath = path.replace(searchPath, '').replace(searchPath+'/','');
         let tempPath = `./TEMP/${device.device}/${k}/${rootPath}`;
         fs.lstatSync(path).isDirectory() ? fs.copySync(path, tempPath) : fs.cpSync(path, tempPath);
@@ -53,6 +55,7 @@ let copyToTemp = async function(device, k){
             rootPath
         });
     }
+    report({done: found.length, total: found.length, file: ''});
 
     return device;
 }

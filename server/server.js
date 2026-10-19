@@ -64,8 +64,17 @@ let run = function(){
         response.end()
     });
     app.get(apiPrefix+'/copyToTemp', async function(request, response){
+        if(c.progress.isRunning()){
+            response.status(409).send({error: 'Already gathering saves - please wait for it to finish'});
+            return;
+        }
+        c.progress.start();
+        try{
             config = await c.db.getConfig();
-            devices = await c.devices.getOnlineDevices(config, 'server');
+            config.forEach(d => c.progress.device(d.device, {name: d.name, type: d.type, status: 'checking'}));
+            devices = await c.devices.getOnlineDevices(config, 'server', function(device){
+                c.progress.device(device.device, {status: device.online ? 'online' : 'offline', vpn: !!device.vpnActive});
+            });
             preferences = await c.db.getPreferences(instance);
             for(let i = 0; i < devices.length; i++){
                 let deviceId = devices[i].device;
@@ -75,13 +84,35 @@ let run = function(){
                         devices[i].discover = pref.discover === 1 && devices[i].online ? true : false;
                     }
                 }
+                if(devices[i].online && !devices[i].discover) c.progress.device(deviceId, {status: 'skipped'});
             }
             online = c.functions.getMasterList(devices);
+            c.progress.phase('Gathering saves');
             online = await c.devices.prepareFiles(online);
             online = storeFunctions(online); //Required to parse function in API call
+            c.progress.finish();
             console.log('Finished Copying from temp')
             response.send(JSON.stringify(online));
             response.end()
+        }catch(e){
+            console.log(e);
+            c.progress.finish(e);
+            response.status(500).send({error: e.message});
+        }
+    });
+
+    //Live progress of copyToTemp (Server-Sent Events)
+    app.get(apiPrefix+'/progress', function(request, response){
+        response.set({
+            'Content-Type': 'text/event-stream',
+            'Cache-Control': 'no-cache',
+            'Connection': 'keep-alive'
+        });
+        response.flushHeaders();
+        let send = state => response.write(`data: ${JSON.stringify(state)}\n\n`);
+        send(c.progress.snapshot());
+        let unsubscribe = c.progress.subscribe(send);
+        request.on('close', unsubscribe);
     });
 
     app.post(apiPrefix+'/getOnlinePlatformList', async function(request, response){
@@ -132,6 +163,31 @@ let run = function(){
             response.end()
         }
     });
+    //Save versions of a game in the repo
+    app.post(apiPrefix+'/getVersions', async function(request, response){
+        try{
+            response.send(await c.versions.list(request.body.platform, request.body.game));
+        }catch(e){
+            response.status(400).send({error: e.message});
+        }
+    });
+    app.post(apiPrefix+'/createVersion', async function(request, response){
+        try{
+            let id = await c.versions.create(request.body);
+            response.send({ok: true, id});
+        }catch(e){
+            response.status(400).send({error: e.message});
+        }
+    });
+    app.post(apiPrefix+'/setActiveVersion', async function(request, response){
+        try{
+            await c.versions.setActive(request.body.platform, request.body.game, request.body.id);
+            response.send({ok: true});
+        }catch(e){
+            response.status(400).send({error: e.message});
+        }
+    });
+
     app.post(apiPrefix+'/syncTheSave', async function(request, response){
         if(request.body){
             let res = await c.devices.syncTheSave(request.body.latest,request.body.pushList, online);

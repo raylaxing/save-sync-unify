@@ -4,7 +4,8 @@ let colors = require('colors');
 let {zip} = require('zip-a-folder');
 
 //This get's the online devices and prepares them for continuing...
-let getOnlineDevices = async function(config, mode){
+//onChecked(device) is called as each device's online check finishes (used for progress)
+let getOnlineDevices = async function(config, mode, onChecked){
     //Check all devices at the same time so offline devices don't hold up the rest
     await Promise.all(config.map(async function(device){
         //Checks if device is alive or not, and sets online flag
@@ -15,6 +16,7 @@ let getOnlineDevices = async function(config, mode){
         if(plugins[device.device])  device.pluginFunctions = plugins[device.device];
 
         device.online = await c[device.type].onlineCheck(device);
+        if(onChecked) onChecked(device);
 
         //Parsing some of the JSON fields;
         device.paths = JSON.parse(device.paths);
@@ -37,6 +39,8 @@ let prepareFiles = async function(devices){
 
     //Gather from each device in parallel - transfers within a device stay sequential on one connection
     await Promise.all(devices.map(async function(device){
+        let report = patch => c.progress.device(device.device, patch);
+        report({status: 'gathering', platformCount: device.platformList.length, platformIndex: 0, done: 0, total: 0, file: ''});
         console.log(`Gathering files for ${device.name[{ftp:'cyan', sftp:'magenta'}[device.type] || 'green']}`)
 
         //Set up folders
@@ -49,9 +53,12 @@ let prepareFiles = async function(devices){
         }
 
         device.fileList = {};
+        //Transfer modules call this per file: {done, total, file}
+        device.reportProgress = report;
         try{
             for(let i = 0; i < device.platformList.length; i++){
                 let k = device.platformList[i];
+                report({platform: k, platformIndex: i, done: 0, total: 0, file: ''});
                 if(device.pluginFunctions && device.pluginFunctions.copyToTemp && device.pluginFunctions.copyToTemp[k]){
                     device = await device.pluginFunctions.copyToTemp[k](device, k);
                 }else if(typeof device.functions.copyToTemp === 'function'){
@@ -63,14 +70,29 @@ let prepareFiles = async function(devices){
 
                 c.functions.copy(`./TEMP/ZIP/${newZipFile}`, `${process.env.REPO_PATH}/DEVICE/${c.functions.yearMonth()}/${newZipFile}`)
             }
+            let fileCount = Object.values(device.fileList).reduce((sum, list) => sum + list.length, 0);
+            report({status: 'done', platformIndex: device.platformList.length, file: '', fileCount});
+        }catch(e){
+            //One failing device shouldn't stop the others - its saves just won't be listed
+            console.log(`Gathering from ${device.name} failed: ${e.message}`);
+            device.gatherError = e.message;
+            report({status: 'failed', error: e.message, file: ''});
         }finally{
+            delete device.reportProgress;
             if(device.functions.releaseConnection) device.functions.releaseConnection(device);
         }
     }));
 
-    //Do the GIT for Backups
-    if(await c.git.exists( `${process.env.REPO_PATH}/DEVICE/`)){
-        await c.git.add(`${process.env.REPO_PATH}/DEVICE/`);
+    c.progress.phase('Backing up');
+
+    //Do the GIT for Backups - the zips are already saved, so a failed commit is only a warning
+    try{
+        if(await c.git.exists( `${process.env.REPO_PATH}/DEVICE/`)){
+            await c.git.add(`${process.env.REPO_PATH}/DEVICE/`);
+        }
+    }catch(e){
+        console.log(`Backup commit failed: ${e.message}`);
+        c.progress.warn(`Backup zips were saved but not committed to git: ${e.message}`);
     }
 
     return devices

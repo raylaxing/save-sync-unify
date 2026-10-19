@@ -9,6 +9,8 @@ module.exports={
     functions:require('./functions.js'),
     git: require('./git.js'),
     rom: require('./rom.js'),
-    deviceConfig: require('./deviceConfig.js')
+    deviceConfig: require('./deviceConfig.js'),
+    progress: require('./progress.js'),
+    versions: require('./versions.js')
 
 }
