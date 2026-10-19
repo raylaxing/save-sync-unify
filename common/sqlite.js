@@ -16,7 +16,8 @@ let tables = {
         "extensionSearch":	"TEXT",
         "ftpPort":	        "TEXT",
         "ftpAddressVpn":    "TEXT",
-        "romDir":           "TEXT"
+        "romDir":           "TEXT",
+        "sshKey":           "TEXT"
     },
     discovery:{
             "device":	    "TEXT",

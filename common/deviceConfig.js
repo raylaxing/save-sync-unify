@@ -3,7 +3,10 @@ let path = require('path');
 let isReachable = require('is-reachable');
 let ftp = require('basic-ftp');
 
-const TYPES = ['ftp', 'local'];
+const TYPES = ['ftp', 'sftp', 'local'];
+//Network types - these share the address/port/user/password columns
+const REMOTE = ['ftp', 'sftp'];
+const DEFAULT_PORT = {ftp: '21', sftp: '22'};
 const ID_PATTERN = /^[A-Za-z0-9_-]+$/;
 const BROWSE_IDLE_MS = 60000;
 
@@ -31,6 +34,7 @@ let toEditable = function(row){
         ftpPort: row.ftpPort || '',
         ftpUser: row.ftpUser || '',
         hasPassword: !!row.ftpPW,
+        sshKey: row.sshKey || '',
         localExistCheck: row.localExistCheck || '',
         platforms: Object.keys(paths).map(function(k){
             return {
@@ -75,19 +79,19 @@ let validate = async function(input, existingRow, allRows, knownPlatformCodes){
     }
 
     let type = input.type;
-    if(TYPES.indexOf(type) === -1) errors.type = 'Choose FTP or Local';
+    if(TYPES.indexOf(type) === -1) errors.type = 'Choose a connection type';
 
     let row = {device, name, type};
 
-    if(type === 'ftp'){
-        let address = `${input.ftpAddress || ''}`.trim().replace(/^ftp:\/\//i, '').replace(/\/+$/, '');
+    if(REMOTE.indexOf(type) !== -1){
+        let address = stripScheme(input.ftpAddress);
         if(!address) errors.ftpAddress = 'Address is required';
         else if(/[\s/]/.test(address)) errors.ftpAddress = 'Just the host or IP, e.g. 192.168.1.20';
 
-        let vpn = `${input.ftpAddressVpn || ''}`.trim().replace(/^ftp:\/\//i, '').replace(/\/+$/, '');
+        let vpn = stripScheme(input.ftpAddressVpn);
         if(vpn && /[\s/]/.test(vpn)) errors.ftpAddressVpn = 'Just the host or IP';
 
-        let port = `${input.ftpPort || ''}`.trim() || '21';
+        let port = `${input.ftpPort || ''}`.trim() || DEFAULT_PORT[type];
         if(!/^\d+$/.test(port) || +port < 1 || +port > 65535) errors.ftpPort = 'Port must be 1-65535';
 
         row.ftpAddress = address;
@@ -97,12 +101,17 @@ let validate = async function(input, existingRow, allRows, knownPlatformCodes){
         //Blank password on an existing device means "keep the current one"
         row.ftpPW = input.ftpPW ? input.ftpPW : (existingRow && !input.clearPassword ? existingRow.ftpPW : '');
         row.localExistCheck = '';
+
+        //Private key file on this machine (SFTP only) - optional, password/agent work too
+        let key = type === 'sftp' ? `${input.sshKey || ''}`.trim() : '';
+        if(key && !fs.existsSync(key.replace(/^~(?=\/)/, process.env.HOME || ''))) errors.sshKey = 'Key file not found on this computer';
+        row.sshKey = key;
     }else if(type === 'local'){
         let check = normalisePath(input.localExistCheck);
         if(!check) errors.localExistCheck = 'Pick a folder that only exists on this drive';
         else if(!check.startsWith('/')) check = '/' + check;
         row.localExistCheck = check;
-        row.ftpAddress = row.ftpAddressVpn = row.ftpPort = row.ftpUser = row.ftpPW = '';
+        row.ftpAddress = row.ftpAddressVpn = row.ftpPort = row.ftpUser = row.ftpPW = row.sshKey = '';
     }
 
     let platforms = Array.isArray(input.platforms) ? input.platforms : [];
@@ -146,40 +155,80 @@ let validate = async function(input, existingRow, allRows, knownPlatformCodes){
  * CONNECTIONS FOR BROWSING *
  ****************************/
 
-//Resolves the FTP credentials to use - a blank password falls back to the saved one
-let ftpCredentials = async function(input){
+//"ftp://host/" or "user@host" -> "host"
+let stripScheme = function(addr){
+    return `${addr || ''}`.trim().replace(/^(s?ftp|ssh):\/\//i, '').replace(/^[^@\/]+@/, '').replace(/\/+$/, '');
+};
+
+//Resolves the credentials to use - a blank password falls back to the saved one
+let remoteCredentials = async function(input){
     let pw = input.ftpPW;
     if(!pw && input.id && !input.clearPassword){
         let row = await c.db.getDevice(input.id);
         if(row) pw = row.ftpPW;
     }
     return {
-        host: `${input.ftpAddress || ''}`.trim().replace(/^ftp:\/\//i, ''),
-        vpn: `${input.ftpAddressVpn || ''}`.trim().replace(/^ftp:\/\//i, ''),
-        port: +(input.ftpPort || 21),
-        user: `${input.ftpUser || ''}`.trim() || 'anonymous',
-        password: pw || ''
+        type: input.type,
+        host: stripScheme(input.ftpAddress),
+        vpn: stripScheme(input.ftpAddressVpn),
+        port: +(input.ftpPort || DEFAULT_PORT[input.type]),
+        user: `${input.ftpUser || ''}`.trim() || (input.type === 'sftp' ? 'root' : 'anonymous'),
+        password: pw || '',
+        sshKey: input.type === 'sftp' ? `${input.sshKey || ''}`.trim() : ''
     };
 };
 
-//One cached FTP client for browsing, so clicking through folders doesn't log in every time.
-//Requests are queued because a basic-ftp client can only do one thing at a time.
+//Opens a connection for browsing: {home, list(dir) -> {path, entries}, close(), closed()}
+let openRemote = async function(creds, host){
+    if(creds.type === 'sftp'){
+        let conn = await c.sftp.connect({ftpPort: creds.port, ftpUser: creds.user, ftpPW: creds.password, sshKey: creds.sshKey}, host);
+        return {
+            home: conn.home,
+            closed: conn.closed,
+            close: conn.close,
+            list: async function(dir){
+                let stat;
+                try{ stat = await conn.client.stat(dir); }catch(e){ throw new Error(`Folder not found: ${dir}`); }
+                if(!stat.isDirectory) throw new Error(`Not a folder: ${dir}`);
+                return {path: path.posix.normalize(dir), entries: await c.sftp.listDir(conn.client, dir)};
+            }
+        };
+    }
+    let client = new ftp.Client(15000);
+    await client.access({host, port: creds.port, user: creds.user, password: creds.password});
+    return {
+        home: await client.pwd(),
+        closed: () => client.closed,
+        close: () => client.close(),
+        list: async function(dir){
+            try{
+                await client.cd(dir);
+            }catch(e){
+                if(e.code === 550) throw new Error(`Folder not found: ${dir}`);
+                throw e;
+            }
+            return {path: await client.pwd(), entries: await client.list()};
+        }
+    };
+};
+
+//One cached connection for browsing, so clicking through folders doesn't log in every time.
+//Requests are queued because a client can only do one thing at a time.
 let browseSession = null;
 let browseQueue = Promise.resolve();
 
 let withBrowseClient = function(creds, fn){
     let run = async function(){
         let key = JSON.stringify(creds);
-        if(!browseSession || browseSession.key !== key || browseSession.client.closed){
-            if(browseSession) browseSession.client.close();
+        if(!browseSession || browseSession.key !== key || browseSession.remote.closed()){
+            if(browseSession) browseSession.remote.close();
             browseSession = null;
 
-            let client = new ftp.Client(15000);
             let host = creds.host;
             //Fall back to the VPN address if the main one isn't reachable
             if(creds.vpn && !(await isReachable(`${host}:${creds.port}`, {timeout: 3000}))) host = creds.vpn;
-            await client.access({host, port: creds.port, user: creds.user, password: creds.password});
-            browseSession = {key, client, home: await client.pwd(), host};
+            let remote = await openRemote(creds, host);
+            browseSession = {key, remote, home: remote.home, host};
         }
         clearTimeout(browseSession.timer);
         let session = browseSession;
@@ -187,7 +236,7 @@ let withBrowseClient = function(creds, fn){
             return await fn(session);
         } finally {
             session.timer = setTimeout(function(){
-                session.client.close();
+                session.remote.close();
                 if(browseSession === session) browseSession = null;
             }, BROWSE_IDLE_MS);
         }
@@ -219,20 +268,13 @@ let sortNames = (a, b) => a.localeCompare(b, undefined, {sensitivity: 'base'});
 
 //Lists folders (and a summary of file extensions) at a path on the device
 let browse = async function(input, browsePath){
-    if(input.type === 'ftp'){
-        let creds = await ftpCredentials(input);
-        if(!creds.host) throw new Error('Set the FTP address first');
+    if(REMOTE.indexOf(input.type) !== -1){
+        let creds = await remoteCredentials(input);
+        if(!creds.host) throw new Error('Set the address first');
         return await withBrowseClient(creds, async function(session){
             let target = normalisePath(browsePath) || session.home;
             if(!target.startsWith('/')) target = path.posix.join(session.home, target);
-            try{
-                await session.client.cd(target);
-            }catch(e){
-                if(e.code === 550) throw new Error(`Folder not found: ${target}`);
-                throw e;
-            }
-            let current = await session.client.pwd();
-            let list = await session.client.list();
+            let {path: current, entries: list} = await session.remote.list(target);
             let dirs = list.filter(x => x.isDirectory && !x.name.startsWith('.')).map(x => x.name).sort(sortNames);
             let files = list.filter(x => x.isFile).map(x => x.name);
             return {path: current, root: '/', dirs, extensions: summariseFiles(files), fileCount: files.length};
@@ -308,9 +350,9 @@ let test = async function(input){
     };
 
     try{
-        if(input.type === 'ftp'){
-            let creds = await ftpCredentials(input);
-            if(!creds.host) throw new Error('Set the FTP address first');
+        if(REMOTE.indexOf(input.type) !== -1){
+            let creds = await remoteCredentials(input);
+            if(!creds.host) throw new Error('Set the address first');
             let reachable = await isReachable(`${creds.host}:${creds.port}`, {timeout: 5000});
             result.steps.push({ok: reachable, message: `${creds.host}:${creds.port} ${reachable ? 'is reachable' : 'did not respond'}`});
             if(!reachable && creds.vpn){

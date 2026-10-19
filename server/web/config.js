@@ -32,6 +32,10 @@ let post = async function(url, obj){
     return body;
 };
 
+//Network types - share the address/port/user/password fields
+const DEFAULT_PORT = {ftp: '21', sftp: '22'};
+let isRemote = type => type === 'ftp' || type === 'sftp';
+
 let slugify = function(str){
     return `${str}`.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
 };
@@ -75,8 +79,8 @@ let renderList = function(){
     }
 
     state.devices.forEach(function(d){
-        let where = d.type === 'ftp'
-            ? `${esc(d.ftpAddress)}:${esc(d.ftpPort || 21)}${d.ftpAddressVpn ? ` (VPN ${esc(d.ftpAddressVpn)})` : ''}`
+        let where = isRemote(d.type)
+            ? `${d.ftpUser && d.type === 'sftp' ? `${esc(d.ftpUser)}@` : ''}${esc(d.ftpAddress)}:${esc(d.ftpPort || DEFAULT_PORT[d.type])}${d.ftpAddressVpn ? ` (VPN ${esc(d.ftpAddressVpn)})` : ''}`
             : `Drive with ${esc(d.localExistCheck)}`;
         html += `
         <div class="nes-container with-title deviceCard">
@@ -100,7 +104,7 @@ let startEdit = function(id){
     let source = state.devices.find(d => d.id === id);
     let d = source ? JSON.parse(JSON.stringify(source)) : {
         name: '', device: '', type: 'ftp',
-        ftpAddress: '', ftpAddressVpn: '', ftpPort: '21', ftpUser: '', hasPassword: false,
+        ftpAddress: '', ftpAddressVpn: '', ftpPort: '21', ftpUser: '', hasPassword: false, sshKey: '',
         localExistCheck: '', platforms: []
     };
     d.ftpPW = '';
@@ -204,29 +208,34 @@ let renderEditor = function(){
         <div class="field typeChoice ${state.errors.type ? 'has-error' : ''}">
             <label>Connection</label>
             <label><input type="radio" class="nes-radio" name="type" value="ftp" ${d.type === 'ftp' ? 'checked' : ''} onChange="setType('ftp')" /><span>FTP (network)</span></label>
+            <label><input type="radio" class="nes-radio" name="type" value="sftp" ${d.type === 'sftp' ? 'checked' : ''} onChange="setType('sftp')" /><span>SFTP (SSH)</span></label>
             <label><input type="radio" class="nes-radio" name="type" value="local" ${d.type === 'local' ? 'checked' : ''} onChange="setType('local')" /><span>Local (SD card / USB)</span></label>
             ${state.errors.type ? `<div class="err">${esc(state.errors.type)}</div>` : ''}
         </div>
     </div>
 
     <div class="nes-container with-title section">
-        <h3 class="title">${d.type === 'ftp' ? 'FTP' : 'Drive'}</h3>
-        ${d.type === 'ftp' ? `
+        <h3 class="title">${{ftp: 'FTP', sftp: 'SFTP'}[d.type] || 'Drive'}</h3>
+        ${isRemote(d.type) ? `
             <div class="row">
                 <div class="grow">${fieldHtml('ftpAddress', 'Address', {placeholder: '192.168.1.20'})}</div>
-                <div style="flex:0 0 120px">${fieldHtml('ftpPort', 'Port', {placeholder: '21'})}</div>
+                <div style="flex:0 0 120px">${fieldHtml('ftpPort', 'Port', {placeholder: DEFAULT_PORT[d.type]})}</div>
             </div>
             ${fieldHtml('ftpAddressVpn', 'VPN address <span class="hint">(optional)</span>', {
                 placeholder: '100.x.x.x',
                 hint: 'Used when the main address isn\'t reachable, e.g. a Tailscale IP.'
             })}
             <div class="row">
-                <div class="grow">${fieldHtml('ftpUser', 'User', {placeholder: 'anonymous'})}</div>
+                <div class="grow">${fieldHtml('ftpUser', 'User', {placeholder: d.type === 'sftp' ? 'root' : 'anonymous'})}</div>
                 <div class="grow">${fieldHtml('ftpPW', 'Password', {
                     type: 'password',
                     placeholder: d.hasPassword ? 'Saved - leave blank to keep' : ''
                 })}</div>
             </div>
+            ${d.type === 'sftp' ? fieldHtml('sshKey', 'Private key file <span class="hint">(optional)</span>', {
+                placeholder: '~/.ssh/id_ed25519',
+                hint: 'Path on this computer. The password is used as the key passphrase if set. A running ssh-agent is also tried.'
+            }) : ''}
         ` : `
             ${fieldHtml('localExistCheck', 'Drive marker folder', {
                 placeholder: '/Roms',
@@ -322,7 +331,10 @@ document.addEventListener('input', function(e){
 });
 
 let setType = function(type){
-    state.draft.type = type;
+    let d = state.draft;
+    //Swap the default port when switching between FTP and SFTP, unless a custom one was entered
+    if(isRemote(type) && (!d.ftpPort || d.ftpPort === DEFAULT_PORT[d.type])) d.ftpPort = DEFAULT_PORT[type];
+    d.type = type;
     state.test = null;
     state.dirty = true;
     render();

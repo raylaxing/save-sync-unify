@@ -37,7 +37,7 @@ let prepareFiles = async function(devices){
 
     //Gather from each device in parallel - transfers within a device stay sequential on one connection
     await Promise.all(devices.map(async function(device){
-        console.log(`Gathering files for ${device.name[device.type==='ftp'?'cyan':'green']}`)
+        console.log(`Gathering files for ${device.name[{ftp:'cyan', sftp:'magenta'}[device.type] || 'green']}`)
 
         //Set up folders
         c.functions.dirCreate('./TEMP/'+device.device);

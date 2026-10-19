@@ -64,6 +64,7 @@ html[data-theme="dark"] .badge{
 }
 html[data-theme="dark"] .badge.ftp{ background:#5c4a12; color:#ffe08a; }
 html[data-theme="dark"] .badge.local{ background:#24461f; color:#b6e6b0; }
+html[data-theme="dark"] .badge.sftp{ background:#4a1f42; color:#f4b6e6; }
 html[data-theme="dark"] .chip{
     background:#2a2d31;
     border-color:#e8e8e8;
