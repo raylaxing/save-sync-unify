@@ -3,6 +3,15 @@ let fs = require('fs');
 let colors = require('colors');
 let {zip} = require('zip-a-folder');
 
+let parseObject = function(str){
+    try {
+        let value = JSON.parse(str);
+        return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+    } catch(e) {
+        return {};
+    }
+};
+
 //This get's the online devices and prepares them for continuing...
 //onChecked(device) is called as each device's online check finishes (used for progress)
 let getOnlineDevices = async function(config, mode, onChecked){
@@ -18,11 +27,11 @@ let getOnlineDevices = async function(config, mode, onChecked){
         device.online = await c[device.type].onlineCheck(device);
         if(onChecked) onChecked(device);
 
-        //Parsing some of the JSON fields;
-        device.paths = JSON.parse(device.paths);
-        device.extensionSearch = JSON.parse(device.extensionSearch);
+        //Parsing some of the JSON fields (blank or broken values become empty)
+        device.paths = parseObject(device.paths);
+        device.extensionSearch = parseObject(device.extensionSearch);
         device.platformList = Object.keys(device.paths);
-        if(device.romDir && device.romDir !=='') device.romDir = JSON.parse(device.romDir) 
+        device.romDir = parseObject(device.romDir);
     }));
     return config
 }

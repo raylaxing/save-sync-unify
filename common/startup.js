@@ -27,5 +27,6 @@ module.exports = async function(){
     //DB Check
     await db.setup();
     await db.migrate();
+    await db.cleanDevices();
     return true;
 }

@@ -49,7 +49,8 @@ let resolvePath = function(home, p){
 
 //Checks URL and returns if it's alive or not
 let onlineCheck = async function(device){
-    let available =  await isReachable(`${device.ftpAddress}:${device.ftpPort}`, {timeout:REACHABLE_TIMEOUT});
+    if(!device.ftpAddress && !device.ftpAddressVpn) return false;
+    let available = device.ftpAddress ? await isReachable(`${device.ftpAddress}:${device.ftpPort}`, {timeout:REACHABLE_TIMEOUT}) : false;
     if(!available && device.ftpAddressVpn && device.ftpAddressVpn !== ''){
         //Check for VPN address is available and replace is available
         available = await isReachable(`${device.ftpAddressVpn}:${device.ftpPort}`, {timeout:REACHABLE_TIMEOUT});

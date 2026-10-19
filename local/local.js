@@ -198,7 +198,7 @@ let pushRepositories = async function(){
 let syncRoms = async function(online){
 
     let romSyncDevices = []; 
-    for(let i = 0; i < online.length; i++){ if(online[i].romDir) romSyncDevices.push(online[i]); }
+    for(let i = 0; i < online.length; i++){ if(Object.keys(online[i].romDir).length) romSyncDevices.push(online[i]); }
     let deviceList = romSyncDevices.map(function(x){x.text = x.name; x.value = x.device; return x})
     let device = "";
 

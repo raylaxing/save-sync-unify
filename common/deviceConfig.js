@@ -14,9 +14,15 @@ const BROWSE_IDLE_MS = 60000;
  * SHAPING / OUTPUT  *
  *********************/
 
+//Parses a JSON object column - anything else (empty, "null", bad JSON) gives the fallback
 let parseJSON = function(str, fallback){
     if(!str) return fallback;
-    try { return JSON.parse(str); } catch(e) { return fallback; }
+    try {
+        let value = JSON.parse(str);
+        return value && typeof value === 'object' && !Array.isArray(value) ? value : fallback;
+    } catch(e) {
+        return fallback;
+    }
 };
 
 //Converts a DB row into the shape the config page edits (passwords never leave the server)
@@ -40,7 +46,7 @@ let toEditable = function(row){
             return {
                 code: k,
                 path: paths[k] || '',
-                extensions: (exts[k] || []).map(normaliseExt).filter(Boolean),
+                extensions: (Array.isArray(exts[k]) ? exts[k] : []).map(normaliseExt).filter(Boolean),
                 romDir: romDir[k] || ''
             };
         })

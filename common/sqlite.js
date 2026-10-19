@@ -166,6 +166,14 @@ let run = function(sql, params = []){
     return write(sql, params);
 };
 
+//The old config page saved empty fields as the text "null"/"undefined" - blank them out
+let cleanDevices = async function(){
+    let cols = Object.keys(tables.devices);
+    for(let i = 0; i < cols.length; i++){
+        await write(`UPDATE devices SET ${cols[i]} = '' WHERE ${cols[i]} IN ('null', 'undefined')`, []);
+    }
+};
+
 let getDevice = async function(id){
     let res = await get(`SELECT * FROM devices WHERE id = ?`, false, [id]);
     return res && res[0];
@@ -286,5 +294,5 @@ let getSchema = function(){
     return tables;
 }
 
-module.exports={setup, migrate, query, run, getDevice, deleteDevice, countDeviceMappings, getConfig, writeConfig, getPreferences, writePreference, getSchema, getRepo, getPlatformNames, newRepoRecord, updateRepoCopiedFrom, updateRepoCopiedTo, getFullMapping, deleteMappingEntry, getGameFromID
+module.exports={setup, migrate, cleanDevices, query, run, getDevice, deleteDevice, countDeviceMappings, getConfig, writeConfig, getPreferences, writePreference, getSchema, getRepo, getPlatformNames, newRepoRecord, updateRepoCopiedFrom, updateRepoCopiedTo, getFullMapping, deleteMappingEntry, getGameFromID
 }

@@ -94,8 +94,9 @@ let listDir = async function(client, dir){
 
 //Checks URL and returns if it's alive or not
 let onlineCheck = async function(device){
+    if(!device.ftpAddress && !device.ftpAddressVpn) return false;
     let port = device.ftpPort || 22;
-    let available =  await isReachable(`${device.ftpAddress}:${port}`, {timeout:REACHABLE_TIMEOUT});
+    let available = device.ftpAddress ? await isReachable(`${device.ftpAddress}:${port}`, {timeout:REACHABLE_TIMEOUT}) : false;
     if(!available && device.ftpAddressVpn && device.ftpAddressVpn !== ''){
         //Check for VPN address is available and replace is available
         available = await isReachable(`${device.ftpAddressVpn}:${port}`, {timeout:REACHABLE_TIMEOUT});
