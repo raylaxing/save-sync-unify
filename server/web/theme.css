@@ -1,0 +1,90 @@
+/* Shared theme styles - NES components are darkened by theme.js via .is-dark */
+#themeToggle{
+    position:fixed;
+    top:10px;
+    right:10px;
+    z-index:100;
+    font-size:10px;
+    padding:4px 8px;
+}
+
+html[data-theme="dark"]{
+    color-scheme: dark;
+}
+html[data-theme="dark"] body{
+    background:#181a1d;
+    color:#e8e8e8;
+}
+html[data-theme="dark"] .nes-input.is-dark::placeholder{
+    color:#8a8f96;
+}
+html[data-theme="dark"] .nes-input[readonly]{
+    color:#9aa0a6;
+}
+
+/* Main page */
+html[data-theme="dark"] .deviceListing{
+    background: linear-gradient(320deg, #2a4058, #212529)!important;
+}
+html[data-theme="dark"] .deviceListing.is-dark::after{
+    background: transparent;
+}
+html[data-theme="dark"] .unavailableDevice{
+    color:#777!important;
+    border-color:#555!important;
+    background:#2a2d31!important;
+}
+html[data-theme="dark"] .mappingPath{
+    color:#cfd8ff;
+    background-color:#34406a;
+}
+html[data-theme="dark"] .mappingStripes:nth-child(even){
+    background: linear-gradient(90deg, transparent, #33373c, transparent)!important;
+}
+
+/* Config page */
+html[data-theme="dark"] .deviceCard{
+    background: linear-gradient(320deg, #2a4058, #212529)!important;
+}
+html[data-theme="dark"] .deviceCard.is-dark::after{
+    background: transparent;
+}
+html[data-theme="dark"] .deviceCard .title{
+    background:#212529;
+}
+html[data-theme="dark"] .deviceMeta{
+    color:#b0b4b9;
+}
+html[data-theme="dark"] .hint{
+    color:#9aa0a6;
+}
+html[data-theme="dark"] .badge{
+    background:#34406a;
+    color:#cfd8ff;
+}
+html[data-theme="dark"] .badge.ftp{ background:#5c4a12; color:#ffe08a; }
+html[data-theme="dark"] .badge.local{ background:#24461f; color:#b6e6b0; }
+html[data-theme="dark"] .chip{
+    background:#2a2d31;
+    border-color:#e8e8e8;
+    color:#e8e8e8;
+}
+html[data-theme="dark"] .chip.selected{
+    background:#4d7a1f;
+}
+html[data-theme="dark"] .pickerPath{
+    background:#2a2d31;
+}
+html[data-theme="dark"] .pickerList{
+    border-color:#e8e8e8;
+}
+html[data-theme="dark"] .pickerItem{
+    border-bottom-color:#33373c;
+}
+html[data-theme="dark"] .pickerItem:hover{
+    background:#34406a;
+}
+html[data-theme="dark"] .pickerEmpty{
+    color:#9aa0a6;
+}
+html[data-theme="dark"] .ok{ color:#5cbcff; }
