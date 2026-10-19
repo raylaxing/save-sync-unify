@@ -71,21 +71,24 @@ let get = function(y, gameDBbool, params = []){
     })
 }
 
-let write = function(y, z){
+//Runs a statement and resolves with its error (or null)
+let exec = function(y, z){
     return new Promise(function(resolve){
         let db = new sqlite3.Database(dbFile, sqlite3.OPEN_READWRITE, (err) => {
-            if(err){
-                console.log(err);
-                return resolve(false);
-            }
+            if(err) return resolve(err);
             db.configure('busyTimeout', BUSY_TIMEOUT);
             db.run(y, z, function(err){
                 db.close();
-                if(err) console.log(err);
-                resolve(!err);
+                resolve(err || null);
             });
         });
     })
+}
+
+let write = async function(y, z){
+    let err = await exec(y, z);
+    if(err) console.log(err);
+    return !err;
 }
 
 let objToUpdate = function(obj){
@@ -125,6 +128,7 @@ let setup = function(){
                 console.error(err.message);
                 return resolve(false);
             }
+            db.configure('busyTimeout', BUSY_TIMEOUT);
             db.serialize(function(){
                 Object.keys(tables).forEach(function(name){
                     let fields = Object.keys(tables[name]).map(k => `${k} ${tables[name][k]}`).join(',\n');
@@ -150,8 +154,14 @@ let migrate = async function(){
         let cols = Object.keys(tables[table]);
         for(let e = 0; e < cols.length; e++){
             if(existingCols.indexOf(cols[e]) === -1){
-                let ok = await write(`ALTER TABLE ${table} ADD COLUMN ${cols[e]} ${tables[table][cols[e]]}`, []);
-                console.log(ok ? `Added column ${table}.${cols[e]}` : `FAILED to add column ${table}.${cols[e]} - see error above`);
+                let err = await exec(`ALTER TABLE ${table} ADD COLUMN ${cols[e]} ${tables[table][cols[e]]}`, []);
+                //"duplicate column" means another instance added it at the same moment - that's fine
+                if(!err){
+                    console.log(`Added column ${table}.${cols[e]}`);
+                }else if(!/duplicate column/i.test(err.message)){
+                    console.log(`FAILED to add column ${table}.${cols[e]}: ${err.message}`);
+                    if(err.code === 'SQLITE_BUSY') console.log(`Another process is holding ${dbFile} - is a second copy of this app using the same REPO_PATH?`);
+                }
             }
         }
     }

@@ -27,7 +27,7 @@ let getRepo = async function(){
 //If dir doesn't exist, create it
 let dirCreate = function(dir){
     dir = path.join(dir);
-    if(!fs.existsSync(dir))fs.mkdirSync(dir);
+    fs.mkdirSync(dir, {recursive: true}); //No error if it already exists (or another instance just made it)
 }
 
 let dirRemove = function(dir){
